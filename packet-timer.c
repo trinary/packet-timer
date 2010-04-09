@@ -3,12 +3,14 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <ctype.h>
+#include <ifaddrs.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
 #include <netinet/ip.h>
+#include <netinet/in.h>
 #include <net/ethernet.h>
 #include <string.h>
 
@@ -19,14 +21,63 @@
 struct options {
   char label[256];
   char protocol[256];
-  bpf_u_int32 selfaddr;
+  struct in_addr selfaddr;
 };
 
 struct gentimer {
   char label[256];
   struct timeval start;
+  struct timeval send;
+  struct timeval ack;
+  struct timeval recv;
   struct timeval end;
 };
+
+struct gentimer *cur_timer = NULL;
+
+struct gentimer* new_timer(const char* label)
+{
+  struct gentimer *tm = (struct gentimer*)malloc(sizeof(struct gentimer));
+  if(tm==NULL)
+  {
+    return NULL;
+  }
+  strncpy(tm->label,label,strlen(label));
+  tm->start.tv_sec=0;tm->start.tv_usec=0;
+  tm->ack.tv_sec=0;tm->ack.tv_usec=0;
+  tm->recv.tv_sec=0;tm->recv.tv_usec=0;
+  tm->end.tv_sec=0;tm->end.tv_usec=0;
+  return tm;
+}
+
+int del_timer(struct gentimer* tm)
+{
+  free(tm);
+  tm = NULL;
+  return 1;
+}
+
+int print_timings(struct options *opts,struct gentimer *tm)
+{
+  struct timeval tmp;
+  char timestr[64];
+  timeval_subtract(&tmp,&(tm->send),&(tm->start));
+  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+  printf("Net|%s|%s|%s|Time to First Send\t%s\n",opts->label,opts->protocol,tm->label,timestr);
+
+  timeval_subtract(&tmp,&(tm->ack),&(tm->start));
+  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+  printf("Net|%s|%s|%s|Time to First ACK\t%s\n",opts->label,opts->protocol,tm->label,timestr);
+
+  timeval_subtract(&tmp,&tm->recv,&tm->start);
+  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+  printf("Net|%s|%s|%s|Time to first RX\t%s\n",opts->label,opts->protocol,tm->label,timestr);
+
+  timeval_subtract(&tmp,&tm->end,&tm->start);
+  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+  printf("Net|%s|%s|%s|Time to Connection Close\t%s\n",opts->label,opts->protocol,tm->label,timestr);
+  return 1;
+}
 
 /*
  * print data in rows of 16 bytes: offset   hex   ascii
@@ -164,32 +215,77 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
   int size_payload;
   const char *payload;
 
+
   ethh=(struct ether_header*)(packet);
   iph=(struct ip*)(packet+14); /* sizeof(struct ether_header) */
   size_ip = IP_HL(iph)*4;
   tcph = (struct tcphdr*)(packet+SIZE_ETHER+size_ip);
   size_tcp= tcph->th_off*4;
 
-  /* printf("payload offset: %i + %i + %i = %i\n",SIZE_ETHER,size_ip,size_tcp,SIZE_ETHER+size_ip+size_tcp); */
-
   payload=(u_char *)(packet + SIZE_ETHER + size_ip + size_tcp);
   size_payload = ntohs(iph->ip_len) - (size_ip + size_tcp);
+ 
+/*  printf("payload offset:%i, size %i\n",SIZE_ETHER+size_ip+size_tcp,size_payload);*/ 
 
-
-
-  if (strncmp(payload,"GET ",4)==0)
+  if((tcph->th_flags & TH_SYN) && !(tcph->th_flags & TH_ACK) && (size_payload == 0))
   {
-    printf("GET issued at %ld.%.6ld\n",ts.tv_sec,(long)ts.tv_usec);
+    if(cur_timer==NULL)
+    {
+      cur_timer = new_timer("unknown");
+    }
+    cur_timer->start = ts;
   }
 
-  if (strncmp(payload,"HTTP/1.1 ",9)==0)
+  if(strncmp(payload,"GET ",4)==0)
   {
-    printf("HTTP recv at %ld.%.6ld\n",ts.tv_sec,(long)ts.tv_usec);
+    strcpy(cur_timer->label,"GET");
+    cur_timer->send = ts;
   }
 
-/*  print_payload(payload,size_payload); */
+  if(strncmp(payload,"PUT ",4)==0)
+  {
+    strcpy(cur_timer->label,"PUT");
+    cur_timer->send = ts;
+  }
+
+  if(strncmp(payload,"POST ",5)==0)
+  {
+    strcpy(cur_timer->label,"POST");
+    cur_timer->send = ts;
+  }
+
+
+  if((size_payload == 0) && ((tcph->th_flags) & TH_ACK) && !(tcph->th_flags & TH_SYN) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
+  {
+    if(cur_timer != NULL && cur_timer->ack.tv_sec == 0)
+    {
+      cur_timer->ack = ts;
+    }
+  }
+
+  if ((strncmp(payload,"HTTP/1.",7)==0) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
+  {
+    if(cur_timer != NULL && cur_timer->recv.tv_sec == 0)
+    {
+      cur_timer->recv = ts;
+    }
+  }
+
+  if((tcph->th_flags) & TH_FIN)
+  {
+    if(cur_timer != NULL && cur_timer->end.tv_sec == 0)
+    {
+      cur_timer->end = ts;
+      print_timings(opts,cur_timer);
+      free(cur_timer);
+      cur_timer=NULL;
+    }
+  }
+
+   print_payload(payload,size_payload); 
   return 1;
 }
+
 
 int handle_udp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
 {
@@ -211,6 +307,7 @@ int handle_tcp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   const struct timeval ts = pkthdr->ts;
   char srcip[INET_ADDRSTRLEN];
   char dstip[INET_ADDRSTRLEN];
+  char selfip[INET_ADDRSTRLEN];
   struct options *opts = (struct options*)(args);
 
   ethh=(struct ether_header*)(packet);
@@ -220,6 +317,7 @@ int handle_tcp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   /*
   ((tcph->th_flags) & TH_SYN) ? printf(" SYN "): printf("     ");
   ((tcph->th_flags) & TH_ACK) ? printf(" ACK "): printf("     ");
+  ((tcph->th_flags) & TH_FIN) ? printf(" FIN "): printf("     ");
   */
 
   inet_ntop(AF_INET,(const void*)&iph->ip_src,srcip,INET_ADDRSTRLEN);
@@ -251,10 +349,7 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
 {
   const struct ip *iph=(struct ip*)(packet+sizeof(struct ether_header));
 
-  if (iph->ip_off & IP_MF) 
-  {
-    printf("Oh dear lord I'm fragmented!  ");
-  }
+
 
   if (iph->ip_p == IPPROTO_TCP)
   {
@@ -274,7 +369,11 @@ int main(int argc,char **argv)
     struct bpf_program fp;
     bpf_u_int32 maskp;
     bpf_u_int32 netp;
-    struct options opts = {"","",0};
+    struct options opts = {"","",{0}};
+    char selfip[INET_ADDRSTRLEN];
+    struct ifaddrs *ifaddrstruct=NULL,*tmpaddr;
+    struct sockaddr_in ipv4_addr;
+
 
     if(argc < 2)
     {
@@ -290,6 +389,22 @@ int main(int argc,char **argv)
     }
 
     pcap_lookupnet(dev,&netp,&maskp,errbuf);
+
+    getifaddrs(&ifaddrstruct);
+    tmpaddr = ifaddrstruct;
+    while (ifaddrstruct!=NULL)
+    {
+      if(ifaddrstruct->ifa_addr->sa_family==AF_INET && strcmp(ifaddrstruct->ifa_name,dev)==0)
+      {
+        opts.selfaddr=((struct sockaddr_in *)ifaddrstruct->ifa_addr)->sin_addr;
+      }
+      ifaddrstruct=ifaddrstruct->ifa_next;
+    }
+    freeifaddrs(tmpaddr);
+
+    inet_ntop(AF_INET,(const void*)&opts.selfaddr,selfip,INET_ADDRSTRLEN);
+
+    printf("set selfaddr to %s\n",selfip);
 
     descr = pcap_open_live(dev,BUFSIZ,1,-1,errbuf);
     if(descr == NULL)
