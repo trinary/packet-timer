@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <netinet/udp.h>
 #include <netinet/if_ether.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
@@ -74,7 +75,6 @@ int print_timings(struct options *opts,struct gentimer *tm)
 
 void print_hex_ascii_line(const u_char *payload, int len, int offset)
 {
-
   int i;
   int gap;
   const u_char *ch;
@@ -176,8 +176,6 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
   const struct ip *iph;
   const struct tcphdr *tcph;
   const struct timeval ts = pkthdr->ts;
-  char srcip[INET_ADDRSTRLEN];
-  char dstip[INET_ADDRSTRLEN];
   struct options *opts = (struct options*)(args);
   int size_ip;
   int size_tcp;
@@ -251,10 +249,34 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-   print_payload(payload,size_payload); 
+  /* print_payload(payload,size_payload); */
   return 1;
 }
 
+
+int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
+{
+  const struct ether_header *ethh;
+  const struct ip *iph;
+  const struct udphdr *udph;
+  const struct timeval ts = pkthdr->ts;
+  struct options *opts = (struct options*)(args);
+  int size_ip;
+  int size_udp;
+  int size_payload;
+  const char *payload;
+
+  ethh=(struct ether_header*)(packet);
+  iph=(struct ip*)(packet+14); /* sizeof(struct ether_header) */
+  size_ip = IP_HL(iph)*4;
+  size_udp = 8;
+
+  payload=(u_char *)(packet + SIZE_ETHER + size_ip + size_udp);
+  size_payload = ntohs(iph->ip_len) - (size_ip + size_udp);
+
+  print_payload(payload,size_payload);
+
+}
 
 int handle_udp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
 {
@@ -264,37 +286,19 @@ int handle_udp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   struct timeval ts = pkthdr->ts;
   struct options *opts = (struct options*)(args);
 
-  printf("UDP for %s Timeval: %ld.%.6ld\n",opts->label,ts.tv_sec,(long)ts.tv_usec);
+  udph=(struct udphdr*)(packet+sizeof(struct ether_header)+sizeof(struct ip));
+  printf("UDP for %s, sport %i dport %i Timeval: %ld.%.6ld\n",opts->label,udph->source,udph->dest,ts.tv_sec,(long)ts.tv_usec);
+
+  if(udph->dest == 53)
+  {
+    handle_dns(args,pkthdr,packet);
+  }
   return 1;
 }
 
 int handle_tcp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
 {
-  const struct ether_header *ethh;
-  const struct ip *iph;
-  const struct tcphdr *tcph;
-  const struct timeval ts = pkthdr->ts;
-  char srcip[INET_ADDRSTRLEN];
-  char dstip[INET_ADDRSTRLEN];
-  char selfip[INET_ADDRSTRLEN];
   struct options *opts = (struct options*)(args);
-
-  ethh=(struct ether_header*)(packet);
-  iph=(struct ip*)(packet+14); /* sizeof(struct ether_header) */
-  tcph = (struct tcphdr*)(packet+sizeof(struct ether_header)+sizeof(struct ip));
-
-  /*
-  ((tcph->th_flags) & TH_SYN) ? printf(" SYN "): printf("     ");
-  ((tcph->th_flags) & TH_ACK) ? printf(" ACK "): printf("     ");
-  ((tcph->th_flags) & TH_FIN) ? printf(" FIN "): printf("     ");
-  */
-
-  inet_ntop(AF_INET,(const void*)&iph->ip_src,srcip,INET_ADDRSTRLEN);
-  inet_ntop(AF_INET,(const void*)&iph->ip_dst,dstip,INET_ADDRSTRLEN);
-
-  /*
-  printf(" %ld.%.6ld (%5i of %5i) from %15s to %15s, protocol %s\n",ts.tv_sec,(long)ts.tv_usec,pkthdr->caplen,pkthdr->len,srcip,dstip,opts->protocol);
-  */
 
   if (strcmp(opts->protocol,"http")==0)
   {
@@ -318,8 +322,6 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
 {
   const struct ip *iph=(struct ip*)(packet+sizeof(struct ether_header));
 
-
-
   if (iph->ip_p == IPPROTO_TCP)
   {
     handle_tcp(args, pkthdr,packet);
@@ -341,8 +343,6 @@ int main(int argc,char **argv)
     struct options opts = {"","",{0}};
     char selfip[INET_ADDRSTRLEN];
     struct ifaddrs *ifaddrstruct=NULL,*tmpaddr;
-    struct sockaddr_in ipv4_addr;
-
 
     if(argc < 2)
     {
@@ -375,7 +375,7 @@ int main(int argc,char **argv)
 
     printf("set selfaddr to %s\n",selfip);
 
-    descr = pcap_open_live(dev,BUFSIZ,1,-1,errbuf);
+    descr = pcap_open_live(dev,BUFSIZ,1,2000,errbuf);
     if(descr == NULL)
     {
       printf("pcap_open_live(): %s\n",errbuf);
@@ -396,7 +396,7 @@ int main(int argc,char **argv)
     strncpy(opts.label,   argv[1],strlen(argv[1]));
     strncpy(opts.protocol,argv[2],strlen(argv[2]));
 
-    pcap_loop(descr,-1,my_callback,(u_char*)&opts);
+    pcap_loop(descr,60,my_callback,(u_char*)&opts);
 
     fprintf(stdout,"\nfinished\n");
     return 0;
