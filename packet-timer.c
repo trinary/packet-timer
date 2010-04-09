@@ -1,3 +1,4 @@
+#define __FAVOR_BSD 1
 #include <pcap.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,7 +11,6 @@
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
 #include <netinet/ip.h>
-#include <netinet/in.h>
 #include <net/ethernet.h>
 #include <string.h>
 
@@ -220,14 +220,14 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
   iph=(struct ip*)(packet+14); /* sizeof(struct ether_header) */
   size_ip = IP_HL(iph)*4;
   tcph = (struct tcphdr*)(packet+SIZE_ETHER+size_ip);
-  size_tcp= tcph->th_off*4;
+  size_tcp= tcph->doff*4;
 
   payload=(u_char *)(packet + SIZE_ETHER + size_ip + size_tcp);
   size_payload = ntohs(iph->ip_len) - (size_ip + size_tcp);
  
 /*  printf("payload offset:%i, size %i\n",SIZE_ETHER+size_ip+size_tcp,size_payload);*/ 
 
-  if((tcph->th_flags & TH_SYN) && !(tcph->th_flags & TH_ACK) && (size_payload == 0))
+  if((tcph->syn) && !(tcph->ack) && (size_payload == 0))
   {
     if(cur_timer==NULL)
     {
@@ -255,7 +255,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
   }
 
 
-  if((size_payload == 0) && ((tcph->th_flags) & TH_ACK) && !(tcph->th_flags & TH_SYN) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
+  if((size_payload == 0) && (tcph->ack) && !(tcph->syn) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
   {
     if(cur_timer != NULL && cur_timer->ack.tv_sec == 0)
     {
@@ -271,7 +271,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-  if((tcph->th_flags) & TH_FIN)
+  if(tcph->fin)
   {
     if(cur_timer != NULL && cur_timer->end.tv_sec == 0)
     {
