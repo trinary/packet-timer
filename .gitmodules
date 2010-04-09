@@ -1,0 +1,3 @@
+[submodule "libsysshep"]
+	path = libsysshep
+	url = git@github.com:absperf/libsysshep
