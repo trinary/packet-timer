@@ -36,6 +36,14 @@ struct gentimer {
   struct timeval end;
 };
 
+struct dnstimer {
+  char label[256];
+  unsigned short id;
+  struct timeval start;
+  struct timeval recv;
+  struct timeval auth;
+};
+
 struct gentimer *cur_timer = NULL;
 
 struct gentimer* new_timer(const char* label)
@@ -72,6 +80,32 @@ int print_timings(struct options *opts,struct gentimer *tm)
   timeval_subtract(&tmp,&tm->end,&tm->start);
   snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
   printf("Net|%s|%s|%s|Time to Connection Close\t%s\n",opts->label,opts->protocol,tm->label,timestr);
+  return 1;
+}
+
+int dns_q_to_str(const char* dns,char* str)
+{
+  char x=dns[0];
+  char *pt=dns;
+  char size=0;
+  char tmp[64];
+
+  printf("starting decode ");
+
+
+  while (x != 0)
+  {
+    printf(" x = %d",x); fflush(NULL);
+    strcat(".",str);
+    strncpy(str+size,pt+1,x);
+    size+=x;sdf
+
+
+
+    pt += x+1;
+    x=pt[0];
+  }
+  printf("%s\n",str); fflush(NULL);
   return 1;
 }
 
@@ -268,6 +302,8 @@ int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   int size_udp;
   int size_payload;
   const char *payload;
+  const char *req_dns_str;
+  char req_str[1024];
 
   ethh=(struct ether_header*)(packet);
   iph=(struct ip*)(packet+14); /* sizeof(struct ether_header) */
@@ -281,11 +317,17 @@ int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
 
   dnsh = (struct dns_header*)(payload);
 
-  printf("id %u qr %u op %u aa %u tc %u rd %u ra %u ad %u cd %u rcode %u #qd %u #an %u #ns %u #ar %u\n",
+  printf("id %u qr %u op %u aa %u tc %u rd %u ra %u ad %u cd %u rcode %u #qd %u #an %u #au %u #add %u\n",
       dnsh->id,dnsh->qr,dnsh->opcode,dnsh->aa,dnsh->tc,dnsh->rd,dnsh->ra,dnsh->ad,dnsh->cd,dnsh->rcode,
-      ntohs(dnsh->qdcount),ntohs(dnsh->ancount),ntohs(dnsh->nscount),ntohs(dnsh->arcount));
+      ntohs(dnsh->qdcount),ntohs(dnsh->ancount),ntohs(dnsh->authcount),ntohs(dnsh->addcount));
+  if (dnsh->qr == 0)
+  {
+    req_dns_str=payload+12;
+    print_payload(req_dns_str,30);
+    printf("QUERY!\n");
+    dns_q_to_str(req_dns_str,req_str);
+  }
 
-  print_payload(payload,ntohs(udph->len));
 
 }
 
