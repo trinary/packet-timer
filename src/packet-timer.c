@@ -15,6 +15,8 @@
 #include <arpa/inet.h>
 #include <net/ethernet.h>
 
+#include "dnsreq.h"
+
 #define IP_HL(ip)   (((ip)->ip_hl) & 0x0f)
 #define TH_OFF(th)  ((th)->th_x2)
 #define SIZE_ETHER  14
@@ -260,6 +262,7 @@ int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   const struct ip *iph;
   const struct udphdr *udph;
   const struct timeval ts = pkthdr->ts;
+  const struct dns_header *dnsh;
   struct options *opts = (struct options*)(args);
   int size_ip;
   int size_udp;
@@ -271,25 +274,37 @@ int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   size_ip = IP_HL(iph)*4;
   size_udp = 8;
 
+  udph=(struct udphdr*)(packet+SIZE_ETHER+size_ip);
+
   payload=(u_char *)(packet + SIZE_ETHER + size_ip + size_udp);
   size_payload = ntohs(iph->ip_len) - (size_ip + size_udp);
 
-  print_payload(payload,size_payload);
+  dnsh = (struct dns_header*)(payload);
+
+  printf("id %u qr %u op %u aa %u tc %u rd %u ra %u ad %u cd %u rcode %u #qd %u #an %u #ns %u #ar %u\n",
+      dnsh->id,dnsh->qr,dnsh->opcode,dnsh->aa,dnsh->tc,dnsh->rd,dnsh->ra,dnsh->ad,dnsh->cd,dnsh->rcode,
+      ntohs(dnsh->qdcount),ntohs(dnsh->ancount),ntohs(dnsh->nscount),ntohs(dnsh->arcount));
+
+  print_payload(payload,ntohs(udph->len));
 
 }
 
 int handle_udp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
 {
   const struct ether_header *eth_hdr=(struct ether_header*)(packet);
-  const struct ip *iph=(struct ip*)(packet+sizeof(struct ether_header));
+  const struct ip *iph=(struct ip*)(packet+14);
   const struct udphdr *udph;
+  int size_ip;
   struct timeval ts = pkthdr->ts;
   struct options *opts = (struct options*)(args);
 
-  udph=(struct udphdr*)(packet+sizeof(struct ether_header)+sizeof(struct ip));
-  printf("UDP for %s, sport %i dport %i Timeval: %ld.%.6ld\n",opts->label,udph->source,udph->dest,ts.tv_sec,(long)ts.tv_usec);
+  size_ip = IP_HL(iph)*4;
 
-  if(udph->dest == 53)
+  udph=(struct udphdr*)(packet+SIZE_ETHER+size_ip);
+
+
+
+  if((ntohs(udph->dest) == 53) || ntohs(udph->source) == 53)
   {
     handle_dns(args,pkthdr,packet);
   }
