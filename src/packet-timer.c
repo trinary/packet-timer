@@ -27,7 +27,7 @@ struct options {
   struct in_addr selfaddr;
 };
 
-struct gentimer {
+struct httptimer {
   char label[256];
   struct timeval start;
   struct timeval send;
@@ -42,13 +42,15 @@ struct dnstimer {
   struct timeval start;
   struct timeval recv;
   struct timeval auth;
+  struct timeval end;
 };
 
-struct gentimer *cur_timer = NULL;
+struct httptimer *cur_http_timer = NULL;
+struct dnstimer *cur_dns_timer = NULL;
 
-struct gentimer* new_timer(const char* label)
+struct httptimer* new_http_timer(const char* label)
 {
-  struct gentimer *tm = (struct gentimer*)malloc(sizeof(struct gentimer));
+  struct httptimer *tm = (struct httptimer*)malloc(sizeof(struct httptimer));
   if(tm==NULL)
   {
     return NULL;
@@ -61,7 +63,22 @@ struct gentimer* new_timer(const char* label)
   return tm;
 }
 
-int print_timings(struct options *opts,struct gentimer *tm)
+struct dnstimer* new_dns_timer(const char* label)
+{
+  struct dnstimer *tm=(struct dnstimer*)malloc(sizeof(struct dnstimer));
+  if (tm==NULL)
+  {
+    return NULL;
+  }
+
+  strncpy(tm->label,label,strlen(label));
+  tm->start.tv_sec=0; tm->start.tv_usec=0;
+  tm->recv.tv_sec=0; tm->recv.tv_usec=0;
+  tm->auth.tv_sec=0; tm->auth.tv_usec=0;
+  tm->end.tv_sec=0; tm->end.tv_usec=0;
+}
+
+int print_http_timings(struct options *opts,struct httptimer *tm)
 {
   struct timeval tmp;
   char timestr[64];
@@ -88,24 +105,19 @@ int dns_q_to_str(const char* dns,char* str)
   char x=dns[0];
   char *pt=dns;
   char size=0;
-  char tmp[64];
-
-  printf("starting decode ");
-
 
   while (x != 0)
   {
-    printf(" x = %d",x); fflush(NULL);
-    strcat(".",str);
+    if(size>0)
+    {
+      strcat(str,".");
+      size++;
+    }
     strncpy(str+size,pt+1,x);
-    size+=x;sdf
-
-
-
+    size+=x;
     pt += x+1;
     x=pt[0];
   }
-  printf("%s\n",str); fflush(NULL);
   return 1;
 }
 
@@ -232,56 +244,56 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
 
   if((tcph->syn) && !(tcph->ack) && (size_payload == 0))
   {
-    if(cur_timer==NULL)
+    if(cur_http_timer==NULL)
     {
-      cur_timer = new_timer("unknown");
+      cur_http_timer = new_http_timer("unknown");
     }
-    cur_timer->start = ts;
+    cur_http_timer->start = ts;
   }
 
   if(strncmp(payload,"GET ",4)==0)
   {
-    strcpy(cur_timer->label,"GET");
-    cur_timer->send = ts;
+    strcpy(cur_http_timer->label,"GET");
+    cur_http_timer->send = ts;
   }
 
   if(strncmp(payload,"PUT ",4)==0)
   {
-    strcpy(cur_timer->label,"PUT");
-    cur_timer->send = ts;
+    strcpy(cur_http_timer->label,"PUT");
+    cur_http_timer->send = ts;
   }
 
   if(strncmp(payload,"POST ",5)==0)
   {
-    strcpy(cur_timer->label,"POST");
-    cur_timer->send = ts;
+    strcpy(cur_http_timer->label,"POST");
+    cur_http_timer->send = ts;
   }
 
 
   if((size_payload == 0) && (tcph->ack) && !(tcph->syn) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
   {
-    if(cur_timer != NULL && cur_timer->ack.tv_sec == 0)
+    if(cur_http_timer != NULL && cur_http_timer->ack.tv_sec == 0)
     {
-      cur_timer->ack = ts;
+      cur_http_timer->ack = ts;
     }
   }
 
   if ((strncmp(payload,"HTTP/1.",7)==0) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
   {
-    if(cur_timer != NULL && cur_timer->recv.tv_sec == 0)
+    if(cur_http_timer != NULL && cur_http_timer->recv.tv_sec == 0)
     {
-      cur_timer->recv = ts;
+      cur_http_timer->recv = ts;
     }
   }
 
   if(tcph->fin)
   {
-    if(cur_timer != NULL && cur_timer->end.tv_sec == 0)
+    if(cur_http_timer != NULL && cur_http_timer->end.tv_sec == 0)
     {
-      cur_timer->end = ts;
-      print_timings(opts,cur_timer);
-      free(cur_timer);
-      cur_timer=NULL;
+      cur_http_timer->end = ts;
+      print_http_timings(opts,cur_http_timer);
+      free(cur_http_timer);
+      cur_http_timer=NULL;
     }
   }
 
@@ -289,6 +301,16 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
   return 1;
 }
 
+int print_dns_timings(struct options *opts,struct dnstimer *tm)
+{
+  struct timeval tmp;
+  char timestr[64];
+  timeval_subtract(&tmp,&(tm->auth),&(tm->start));
+  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+  printf("Net|%s|%s|DNS Time\t%s\n",opts->label,opts->protocol,timestr);
+
+  return 1;
+}
 
 int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
 {
@@ -303,7 +325,7 @@ int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   int size_payload;
   const char *payload;
   const char *req_dns_str;
-  char req_str[1024];
+  char req_str[1024] = "";
 
   ethh=(struct ether_header*)(packet);
   iph=(struct ip*)(packet+14); /* sizeof(struct ether_header) */
@@ -317,15 +339,26 @@ int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
 
   dnsh = (struct dns_header*)(payload);
 
-  printf("id %u qr %u op %u aa %u tc %u rd %u ra %u ad %u cd %u rcode %u #qd %u #an %u #au %u #add %u\n",
-      dnsh->id,dnsh->qr,dnsh->opcode,dnsh->aa,dnsh->tc,dnsh->rd,dnsh->ra,dnsh->ad,dnsh->cd,dnsh->rcode,
-      ntohs(dnsh->qdcount),ntohs(dnsh->ancount),ntohs(dnsh->authcount),ntohs(dnsh->addcount));
   if (dnsh->qr == 0)
   {
     req_dns_str=payload+12;
-    print_payload(req_dns_str,30);
-    printf("QUERY!\n");
     dns_q_to_str(req_dns_str,req_str);
+    if (strcmp(req_str,opts->label)==0)
+    {
+      cur_dns_timer = new_dns_timer(opts->label);
+      cur_dns_timer->id = dnsh->id;
+      cur_dns_timer->start = ts;
+    }
+  }
+  if ((dnsh->qr == 1) && (dnsh->aa ==1) && (dnsh->ancount > 0))
+  {
+    if (cur_dns_timer->start.tv_sec != 0 && dnsh->id == cur_dns_timer->id)
+    {
+      cur_dns_timer->auth = ts;
+      print_dns_timings(opts,cur_dns_timer);
+      free(cur_dns_timer);
+      cur_dns_timer=NULL;
+    }
   }
 
 
