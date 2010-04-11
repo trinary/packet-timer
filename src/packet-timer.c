@@ -27,6 +27,13 @@ struct options {
   struct in_addr selfaddr;
 };
 
+struct dnstimer {
+  char label[256];
+  unsigned short id;
+  struct timeval start;
+  struct timeval auth;
+};
+
 struct httptimer {
   char label[256];
   struct timeval start;
@@ -36,17 +43,18 @@ struct httptimer {
   struct timeval end;
 };
 
-struct dnstimer {
+struct ftptimer {
   char label[256];
-  unsigned short id;
   struct timeval start;
-  struct timeval recv;
-  struct timeval auth;
+  struct timeval ack;
+  struct timeval cmd;
   struct timeval end;
 };
 
+
 struct httptimer *cur_http_timer = NULL;
-struct dnstimer *cur_dns_timer = NULL;
+struct dnstimer  *cur_dns_timer  = NULL;
+struct ftptimer  *cur_ftp_timer  = NULL;
 
 struct httptimer* new_http_timer(const char* label)
 {
@@ -63,6 +71,21 @@ struct httptimer* new_http_timer(const char* label)
   return tm;
 }
 
+struct ftptimer* new_ftp_timer(const char* label)
+{
+  struct ftptimer *tm = (struct ftptimer*)malloc(sizeof(struct ftptimer));
+  if(tm==NULL)
+  {
+    return NULL;
+  }
+  strncpy(tm->label,label,strlen(label));
+  tm->start.tv_sec=0;tm->start.tv_usec=0;
+  tm->ack.tv_sec=0;tm->ack.tv_usec=0;
+  tm->cmd.tv_sec=0;tm->cmd.tv_usec=0;
+  tm->end.tv_sec=0;tm->end.tv_usec=0;
+  return tm;
+}
+
 struct dnstimer* new_dns_timer(const char* label)
 {
   struct dnstimer *tm=(struct dnstimer*)malloc(sizeof(struct dnstimer));
@@ -73,9 +96,7 @@ struct dnstimer* new_dns_timer(const char* label)
 
   strncpy(tm->label,label,strlen(label));
   tm->start.tv_sec=0; tm->start.tv_usec=0;
-  tm->recv.tv_sec=0; tm->recv.tv_usec=0;
   tm->auth.tv_sec=0; tm->auth.tv_usec=0;
-  tm->end.tv_sec=0; tm->end.tv_usec=0;
 }
 
 int print_http_timings(struct options *opts,struct httptimer *tm)
@@ -166,9 +187,9 @@ void print_payload(const u_char *payload, int len)
 {
 
   int len_rem = len;
-  int line_width = 16;			/* number of bytes per line */
+  int line_width = 16;
   int line_len;
-  int offset = 0;					/* zero-based offset counter */
+  int offset = 0;
   const u_char *ch = payload;
 
   if (len <= 0)
@@ -240,30 +261,28 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
   payload=(u_char *)(packet + SIZE_ETHER + size_ip + size_tcp);
   size_payload = ntohs(iph->ip_len) - (size_ip + size_tcp);
  
-/*  printf("payload offset:%i, size %i\n",SIZE_ETHER+size_ip+size_tcp,size_payload);*/ 
-
   if((tcph->syn) && !(tcph->ack) && (size_payload == 0))
   {
     if(cur_http_timer==NULL)
     {
       cur_http_timer = new_http_timer("unknown");
+      cur_http_timer->start = ts;
     }
-    cur_http_timer->start = ts;
   }
 
-  if(strncmp(payload,"GET ",4)==0)
+  else if(strncmp(payload,"GET ",4)==0)
   {
     strcpy(cur_http_timer->label,"GET");
     cur_http_timer->send = ts;
   }
 
-  if(strncmp(payload,"PUT ",4)==0)
+  else if(strncmp(payload,"PUT ",4)==0)
   {
     strcpy(cur_http_timer->label,"PUT");
     cur_http_timer->send = ts;
   }
 
-  if(strncmp(payload,"POST ",5)==0)
+  else if(strncmp(payload,"POST ",5)==0)
   {
     strcpy(cur_http_timer->label,"POST");
     cur_http_timer->send = ts;
@@ -278,7 +297,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-  if ((strncmp(payload,"HTTP/1.",7)==0) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
+  else if ((strncmp(payload,"HTTP/1.",7)==0) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
   {
     if(cur_http_timer != NULL && cur_http_timer->recv.tv_sec == 0)
     {
@@ -286,7 +305,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-  if(tcph->fin)
+  else if(tcph->fin)
   {
     if(cur_http_timer != NULL && cur_http_timer->end.tv_sec == 0)
     {
@@ -297,7 +316,6 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-  /* print_payload(payload,size_payload); */
   return 1;
 }
 
@@ -350,7 +368,7 @@ int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
       cur_dns_timer->start = ts;
     }
   }
-  if ((dnsh->qr == 1) && (dnsh->aa ==1) && (dnsh->ancount > 0))
+  if ((dnsh->qr == 1) && (dnsh->ancount > 0))
   {
     if (cur_dns_timer->start.tv_sec != 0 && dnsh->id == cur_dns_timer->id)
     {
@@ -360,24 +378,85 @@ int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
       cur_dns_timer=NULL;
     }
   }
+  return 1;
+}
 
+int print_ftp_timings(struct options *opts,struct ftptimer *tm)
+{
+  struct timeval tmp;
+  char timestr[64];
+  timeval_subtract(&tmp,&(tm->ack),&(tm->start));
+  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+  printf("Net|%s|%s|Time to First ack\t%s\n",opts->label,opts->protocol,timestr);
 
+  timeval_subtract(&tmp,&(tm->end),&(tm->start));
+  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+  printf("Net|%s|%s|Time to QUIT Message\t%s\n",opts->label,opts->protocol,timestr);
+  return 1;
+}
+
+int handle_ftp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
+{
+  const struct ether_header *ethh;
+  const struct ip *iph;
+  const struct tcphdr *tcph;
+  const struct timeval ts = pkthdr->ts;
+  struct options *opts = (struct options*)(args);
+  int size_ip;
+  int size_tcp;
+  int size_payload;
+  const char *payload;
+
+  ethh=(struct ether_header*)(packet);
+  iph=(struct ip*)(packet+14); /* sizeof(struct ether_header) */
+  size_ip = IP_HL(iph)*4;
+  tcph = (struct tcphdr*)(packet+SIZE_ETHER+size_ip);
+  size_tcp= tcph->doff*4;
+
+  payload=(u_char *)(packet + SIZE_ETHER + size_ip + size_tcp);
+  size_payload = ntohs(iph->ip_len) - (size_ip + size_tcp);
+
+  if((tcph->syn) && !(tcph->ack) && (size_payload == 0))
+  {
+    if(cur_ftp_timer==NULL)
+    {
+      cur_ftp_timer = new_ftp_timer("unknown");
+      cur_ftp_timer->start = ts;
+    }
+    printf("set start to %ld.%.6ld\n",cur_ftp_timer->start.tv_sec,(long)cur_ftp_timer->start.tv_usec);
+  }
+
+  else if((size_payload == 0) && (tcph->ack) && !(tcph->syn) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
+  {
+    if(cur_ftp_timer != NULL && cur_ftp_timer->ack.tv_sec == 0)
+    {
+      cur_ftp_timer->ack = ts;
+      printf("set ack to %ld.%.6ld\n",cur_ftp_timer->ack.tv_sec,(long)cur_ftp_timer->ack.tv_usec);
+    }
+  }
+  else if((opts->selfaddr.s_addr == iph->ip_dst.s_addr) && strncmp(payload,"221 ",4)==0)
+  {
+    if(cur_ftp_timer != NULL && cur_ftp_timer->end.tv_sec ==0)
+    {
+      cur_ftp_timer->end = ts;
+      printf("set end to %ld.%.6ld\n",cur_ftp_timer->end.tv_sec,(long)cur_ftp_timer->end.tv_usec);
+      print_ftp_timings(opts,cur_ftp_timer);
+      free(cur_ftp_timer);
+      cur_ftp_timer = NULL;
+    }
+  }
+
+  return 1;
 }
 
 int handle_udp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
 {
-  const struct ether_header *eth_hdr=(struct ether_header*)(packet);
   const struct ip *iph=(struct ip*)(packet+14);
   const struct udphdr *udph;
   int size_ip;
-  struct timeval ts = pkthdr->ts;
-  struct options *opts = (struct options*)(args);
 
   size_ip = IP_HL(iph)*4;
-
   udph=(struct udphdr*)(packet+SIZE_ETHER+size_ip);
-
-
 
   if((ntohs(udph->dest) == 53) || ntohs(udph->source) == 53)
   {
@@ -399,6 +478,7 @@ int handle_tcp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   }
   else if (strcmp(opts->protocol,"ftp")==0)
   {
+    handle_ftp(args,pkthdr,packet);
   }
   else if (strcmp(opts->protocol,"mapi")==0)
   {
@@ -463,8 +543,6 @@ int main(int argc,char **argv)
 
     inet_ntop(AF_INET,(const void*)&opts.selfaddr,selfip,INET_ADDRSTRLEN);
 
-    printf("set selfaddr to %s\n",selfip);
-
     descr = pcap_open_live(dev,BUFSIZ,1,2000,errbuf);
     if(descr == NULL)
     {
@@ -486,7 +564,7 @@ int main(int argc,char **argv)
     strncpy(opts.label,   argv[1],strlen(argv[1]));
     strncpy(opts.protocol,argv[2],strlen(argv[2]));
 
-    pcap_loop(descr,60,my_callback,(u_char*)&opts);
+    pcap_loop(descr,120,my_callback,(u_char*)&opts);
 
     fprintf(stdout,"\nfinished\n");
     return 0;
