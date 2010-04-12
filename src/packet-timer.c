@@ -788,7 +788,9 @@ int handle_tcp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
 {
   struct options *opts = (struct options*)(args);
 
-  if (strcmp(opts->protocol,"HTTP")==0)
+  if (strcmp(opts->protocol,"HTTP")==0 || strcmp(opts->protocol,"REST")==0 || 
+      strcmp(opts->protocol,"GET(REST)")==0 || strcmp(opts->protocol,"POST(REST)")==0 || 
+      strcmp(opts->protocol,"WebWalk")==0)
   {
     handle_http(args,pkthdr,packet);
   }
@@ -848,7 +850,11 @@ int main(int argc,char **argv)
       exit(1);
     }
 
+    printf("Looked up our Dev\n");
+
     pcap_lookupnet(dev,&netp,&maskp,errbuf);
+
+    printf("Looked up our Net\n");
 
     getifaddrs(&ifaddrstruct);
     tmpaddr = ifaddrstruct;
@@ -862,6 +868,8 @@ int main(int argc,char **argv)
     }
     freeifaddrs(tmpaddr);
 
+    printf("Looked up our self-addr\n");
+
     inet_ntop(AF_INET,(const void*)&opts.selfaddr,selfip,INET_ADDRSTRLEN);
 
     descr = pcap_open_live(dev,BUFSIZ,1,2000,errbuf);
@@ -871,20 +879,25 @@ int main(int argc,char **argv)
       exit(1);
     }
 
+    printf("did a pcap open live()\n");
+
     if(argc > 2)
     {
         /* Lets try and compile the program.. non-optimized */
         if(pcap_compile(descr,&fp,argv[3],0,netp) == -1)
         { fprintf(stderr,"Error calling pcap_compile\n"); exit(1); }
 
+        printf("Compiled pcap program\n");y
         /* set the compiled program as the filter */
         if(pcap_setfilter(descr,&fp) == -1)
         { fprintf(stderr,"Error setting filter\n"); exit(1); }
     }
 
+    printf("Setting up options\n");
     strncpy(opts.label,   argv[1],strlen(argv[1]));
     strncpy(opts.protocol,argv[2],strlen(argv[2]));
 
+    printf("Entering Loop\n");
     pcap_loop(descr,-1,my_callback,(u_char*)&opts);
 
     fprintf(stdout,"\nfinished\n");
