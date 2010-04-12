@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
@@ -51,10 +52,24 @@ struct ftptimer {
   struct timeval end;
 };
 
+struct cifstimer {
+  char label[256];
+  struct timeval start;
+  struct timeval ack;
+  struct timeval send72;
+  struct timeval recv72;
+  struct timeval send73;
+  struct timeval recv73;
+  struct timeval sendtree;
+  struct timeval recvtree;
+  struct timeval fin;
+};
+
 
 struct httptimer *cur_http_timer = NULL;
 struct dnstimer  *cur_dns_timer  = NULL;
 struct ftptimer  *cur_ftp_timer  = NULL;
+struct cifstimer *cur_cifs_timer  = NULL;
 
 struct httptimer* new_http_timer(const char* label)
 {
@@ -97,27 +112,49 @@ struct dnstimer* new_dns_timer(const char* label)
   strncpy(tm->label,label,strlen(label));
   tm->start.tv_sec=0; tm->start.tv_usec=0;
   tm->auth.tv_sec=0; tm->auth.tv_usec=0;
+  return tm;
+}
+
+struct cifstimer* new_cifs_timer(const char* label)
+{
+  struct cifstimer *tm=(struct cifstimer*)malloc(sizeof(struct cifstimer));
+  if (tm==NULL)
+  {
+    return NULL;
+  }
+
+  strncpy(tm->label,label,strlen(label));
+  tm->start.tv_sec=0; tm->start.tv_usec=0;
+  tm->ack.tv_sec=0; tm->ack.tv_usec=0;
+  tm->fin.tv_sec=0; tm->fin.tv_usec=0;
+  tm->send72.tv_sec=0; tm->send72.tv_usec=0;
+  tm->recv72.tv_sec=0; tm->recv72.tv_usec=0;
+  tm->send73.tv_sec=0; tm->send73.tv_usec=0;
+  tm->recv73.tv_sec=0; tm->recv73.tv_usec=0;
+  tm->sendtree.tv_sec=0; tm->sendtree.tv_usec=0;
+  tm->recvtree.tv_sec=0; tm->recvtree.tv_usec=0;
+  return tm;
 }
 
 int print_http_timings(struct options *opts,struct httptimer *tm)
 {
   struct timeval tmp;
   char timestr[64];
-  timeval_subtract(&tmp,&(tm->send),&(tm->start));
-  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|%s|%s|%s|Time to First Send\t%s\n",opts->label,opts->protocol,tm->label,timestr);
-
   timeval_subtract(&tmp,&(tm->ack),&(tm->start));
   snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
   printf("Net|%s|%s|%s|Time to First ACK\t%s\n",opts->label,opts->protocol,tm->label,timestr);
 
-  timeval_subtract(&tmp,&tm->recv,&tm->start);
+  timeval_subtract(&tmp,&(tm->send),&(tm->ack));
   snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|%s|%s|%s|Time to first RX\t%s\n",opts->label,opts->protocol,tm->label,timestr);
+  printf("Net|%s|%s|%s|Ack to First Send\t%s\n",opts->label,opts->protocol,tm->label,timestr);
 
-  timeval_subtract(&tmp,&tm->end,&tm->start);
+  timeval_subtract(&tmp,&tm->recv,&tm->send);
   snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|%s|%s|%s|Time to Connection Close\t%s\n",opts->label,opts->protocol,tm->label,timestr);
+  printf("Net|%s|%s|%s|Send to first Recv\t%s\n",opts->label,opts->protocol,tm->label,timestr);
+
+  timeval_subtract(&tmp,&tm->end,&tm->recv);
+  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+  printf("Net|%s|%s|%s|Recv to Connection Close\t%s\n",opts->label,opts->protocol,tm->label,timestr);
   return 1;
 }
 
@@ -183,9 +220,36 @@ void print_hex_ascii_line(const u_char *payload, int len, int offset)
   return;
 }
 
+void print_tcpflags(const struct tcphdr *tcph)
+{
+  if(tcph->urg)
+  { printf("U"); }
+  else
+  { printf(" "); }
+  if(tcph->ack)
+  { printf("A"); }
+  else
+  { printf(" "); }
+  if(tcph->psh)
+  { printf("P"); }
+  else
+  { printf(" "); }
+  if(tcph->rst)
+  { printf("R"); }
+  else
+  { printf(" "); }
+  if(tcph->syn)
+  { printf("S"); }
+  else
+  { printf(" "); }
+  if(tcph->fin)
+  { printf("F"); }
+  else
+  { printf(" "); }
+}
+
 void print_payload(const u_char *payload, int len)
 {
-
   int len_rem = len;
   int line_width = 16;
   int line_len;
@@ -261,12 +325,20 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
   payload=(u_char *)(packet + SIZE_ETHER + size_ip + size_tcp);
   size_payload = ntohs(iph->ip_len) - (size_ip + size_tcp);
  
-  if((tcph->syn) && !(tcph->ack) && (size_payload == 0))
+  if((tcph->syn) && !(tcph->ack) && (size_payload == 0) && (opts->selfaddr.s_addr != iph->ip_dst.s_addr))
   {
     if(cur_http_timer==NULL)
     {
       cur_http_timer = new_http_timer("unknown");
       cur_http_timer->start = ts;
+    }
+  }
+
+  if((size_payload == 0) && (tcph->ack) && !(tcph->syn) && (opts->selfaddr.s_addr != iph->ip_dst.s_addr))
+  {
+    if(cur_http_timer != NULL && cur_http_timer->ack.tv_sec == 0)
+    {
+      cur_http_timer->ack = ts;
     }
   }
 
@@ -286,15 +358,6 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
   {
     strcpy(cur_http_timer->label,"POST");
     cur_http_timer->send = ts;
-  }
-
-
-  if((size_payload == 0) && (tcph->ack) && !(tcph->syn) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
-  {
-    if(cur_http_timer != NULL && cur_http_timer->ack.tv_sec == 0)
-    {
-      cur_http_timer->ack = ts;
-    }
   }
 
   else if ((strncmp(payload,"HTTP/1.",7)==0) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr))
@@ -370,7 +433,7 @@ int handle_dns(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   }
   if ((dnsh->qr == 1) && (dnsh->ancount > 0))
   {
-    if (cur_dns_timer->start.tv_sec != 0 && dnsh->id == cur_dns_timer->id)
+    if (cur_dns_timer != NULL && cur_dns_timer->start.tv_sec != 0 && dnsh->id == cur_dns_timer->id)
     {
       cur_dns_timer->auth = ts;
       print_dns_timings(opts,cur_dns_timer);
@@ -449,6 +512,142 @@ int handle_ftp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   return 1;
 }
 
+
+int print_cifs_timings(struct options *opts,struct cifstimer *tm)
+{
+  struct timeval tmp;
+  long unsigned int a,b;
+  char timestr[64];
+
+  timeval_subtract(&tmp,&(tm->ack),&(tm->start));
+  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+  printf("Net|%s|%s|Time to first ACK\t%s\n",opts->label,opts->protocol,timestr);
+
+  a=tm->recv72.tv_sec*1000000 + tm->recv72.tv_usec;
+  b=tm->send72.tv_sec*1000000 + tm->send72.tv_usec;
+
+  if(a>b)
+  {
+    timeval_subtract(&tmp,&(tm->send72),&(tm->ack));
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|%s|%s|ACK to First Command Recv\t%s\n",opts->label,opts->protocol,timestr);
+
+    timeval_subtract(&tmp,&(tm->recv72),&(tm->send72));
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|%s|%s|Command Recv to First Command Send\t%s\n",opts->label,opts->protocol,timestr);
+
+    timeval_subtract(&tmp,&(tm->fin),&(tm->recv72));
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|%s|%s|Command Recv to Connection End\t%s\n",opts->label,opts->protocol,timestr);
+  }
+  else
+  {
+    timeval_subtract(&tmp,&(tm->recv72),&(tm->ack));
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|%s|%s|ACK to First Command Recv\t%s\n",opts->label,opts->protocol,timestr);
+
+    timeval_subtract(&tmp,&(tm->send72),&(tm->recv72));
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|%s|%s|Command Recv to First Command Send\t%s\n",opts->label,opts->protocol,timestr);
+
+    timeval_subtract(&tmp,&(tm->fin),&(tm->send72));
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|%s|%s|Command Recv to Connection End\t%s\n",opts->label,opts->protocol,timestr);
+  }
+
+
+  return 1;
+}
+
+int handle_cifs(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
+{
+  const struct ether_header *ethh;
+  const struct ip *iph;
+  const struct tcphdr *tcph;
+  const struct timeval ts = pkthdr->ts;
+  struct options *opts = (struct options*)(args);
+  int size_ip;
+  int size_tcp;
+  int size_payload;
+  char incoming;
+  const char *payload;
+  char *smbptr;
+
+  ethh=(struct ether_header*)(packet);
+  iph=(struct ip*)(packet+14); /* sizeof(struct ether_header) */
+  size_ip = IP_HL(iph)*4;
+  tcph = (struct tcphdr*)(packet+SIZE_ETHER+size_ip);
+  size_tcp= tcph->doff*4;
+
+  payload=(u_char *)(packet + SIZE_ETHER + size_ip + size_tcp);
+  size_payload = ntohs(iph->ip_len) - (size_ip + size_tcp);
+
+  if(opts->selfaddr.s_addr == iph->ip_dst.s_addr)
+  { incoming = 1;} 
+  else 
+  { incoming = 0;} 
+
+  if((tcph->syn) && !(tcph->ack) && (size_payload == 0) && (! incoming))
+  {
+    if(cur_cifs_timer==NULL)
+    {
+      printf("new cifs timer\n");
+      cur_cifs_timer = new_cifs_timer("unknown");
+      cur_cifs_timer->start = ts;
+    }
+  }
+
+  if((size_payload == 0) && (tcph->ack) && !(tcph->syn) && (! incoming))
+  {
+    if(cur_cifs_timer != NULL && cur_cifs_timer->ack.tv_sec == 0)
+    {
+      cur_cifs_timer->ack = ts;
+    }
+  }
+
+  if((size_payload > 0) && (! incoming))
+  {
+    smbptr = &(payload[5]);
+    if((strncmp(smbptr,"SMB",3)==0) &&( payload[8] == 0x72))
+    {
+      if(cur_cifs_timer != NULL && cur_cifs_timer->send72.tv_sec == 0)
+      {
+        cur_cifs_timer->send72 = ts;
+      }
+    }
+  }
+
+  if((size_payload > 0) && (incoming))
+  {
+    smbptr = &(payload[5]);
+    if((strncmp(smbptr,"SMB",3)==0) &&( payload[8] == 0x72))
+    {
+      if(cur_cifs_timer != NULL && cur_cifs_timer->recv72.tv_sec == 0)
+      {
+        cur_cifs_timer->recv72 = ts;
+      }
+    }
+  }
+
+  if((size_payload == 0) && (tcph->fin) && (tcph->ack) && (!incoming))
+  {
+    if(cur_cifs_timer != NULL && cur_cifs_timer->fin.tv_sec == 0)
+    {
+      cur_cifs_timer->fin = ts;
+      print_cifs_timings(opts,cur_cifs_timer);
+      free(cur_cifs_timer);
+      cur_cifs_timer = NULL;
+    }
+  }
+
+  return 1;
+}
+
+int handle_mapi(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
+{
+  return 1;
+}
+
 int handle_udp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* packet)
 {
   const struct ip *iph=(struct ip*)(packet+14);
@@ -475,6 +674,7 @@ int handle_tcp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   }
   else if (strcmp(opts->protocol,"cifs")==0)
   {
+    handle_cifs(args,pkthdr,packet);
   }
   else if (strcmp(opts->protocol,"ftp")==0)
   {
@@ -482,6 +682,7 @@ int handle_tcp(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pac
   }
   else if (strcmp(opts->protocol,"mapi")==0)
   {
+    handle_mapi(args,pkthdr,packet);
   }
 
   return 1;
@@ -564,7 +765,7 @@ int main(int argc,char **argv)
     strncpy(opts.label,   argv[1],strlen(argv[1]));
     strncpy(opts.protocol,argv[2],strlen(argv[2]));
 
-    pcap_loop(descr,120,my_callback,(u_char*)&opts);
+    pcap_loop(descr,-1,my_callback,(u_char*)&opts);
 
     fprintf(stdout,"\nfinished\n");
     return 0;
