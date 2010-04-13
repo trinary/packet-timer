@@ -815,6 +815,7 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
 {
   const struct ip *iph=(struct ip*)(packet+sizeof(struct ether_header));
 
+
   if (iph->ip_p == IPPROTO_TCP)
   {
     handle_tcp(args, pkthdr,packet);
@@ -839,7 +840,7 @@ int main(int argc,char **argv)
 
     if(argc < 2)
     {
-        fprintf(stdout,"Usage: %s <label> <protocol> <\"filters\">\n",argv[0]);
+        fprintf(stdout,"Usage: %s <localhost IP> <label> <protocol> <\"filters\">\n",argv[0]);
         return 0;
     }
 
@@ -856,17 +857,24 @@ int main(int argc,char **argv)
 
     printf("Looked up our Net\n");
 
+/*
     getifaddrs(&ifaddrstruct);
     tmpaddr = ifaddrstruct;
+    printf("Got ifaddrstruct, looking for %s\n",dev);
     while (ifaddrstruct!=NULL)
     {
-      if(ifaddrstruct->ifa_addr->sa_family==AF_INET && strcmp(ifaddrstruct->ifa_name,dev)==0)
+      printf("ifaddrstruct not null, %s\n",ifaddrstruct->ifa_name);
+      if(strcmp(ifaddrstruct->ifa_name,dev)==0)
       {
+	printf("found our interface\n");
         opts.selfaddr=((struct sockaddr_in *)ifaddrstruct->ifa_addr)->sin_addr;
       }
+      printf("next ifaddrstruct\n");
       ifaddrstruct=ifaddrstruct->ifa_next;
     }
+    printf("freeing ifaddrs\n");
     freeifaddrs(tmpaddr);
+    */
 
     printf("Looked up our self-addr\n");
 
@@ -884,18 +892,19 @@ int main(int argc,char **argv)
     if(argc > 2)
     {
         /* Lets try and compile the program.. non-optimized */
-        if(pcap_compile(descr,&fp,argv[3],0,netp) == -1)
+        if(pcap_compile(descr,&fp,argv[4],0,netp) == -1)
         { fprintf(stderr,"Error calling pcap_compile\n"); exit(1); }
 
-        printf("Compiled pcap program\n");y
+        printf("Compiled pcap program\n");
         /* set the compiled program as the filter */
         if(pcap_setfilter(descr,&fp) == -1)
         { fprintf(stderr,"Error setting filter\n"); exit(1); }
     }
 
     printf("Setting up options\n");
-    strncpy(opts.label,   argv[1],strlen(argv[1]));
-    strncpy(opts.protocol,argv[2],strlen(argv[2]));
+    strncpy(opts.label,   argv[2],strlen(argv[2]));
+    strncpy(opts.protocol,argv[3],strlen(argv[3]));
+    inet_pton(AF_INET,argv[1],&(opts.selfaddr));
 
     printf("Entering Loop\n");
     pcap_loop(descr,-1,my_callback,(u_char*)&opts);
