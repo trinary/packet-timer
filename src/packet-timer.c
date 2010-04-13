@@ -378,20 +378,29 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
 
   else if(strncmp(payload,"GET ",4)==0 && cur_http_timer->send.tv_sec == 0)
   {
-    strcpy(cur_http_timer->label,"GET");
-    cur_http_timer->send = ts;
+    if(cur_http_timer != NULL)
+    {
+      strcpy(cur_http_timer->label,"GET");
+      cur_http_timer->send = ts;
+    }
   }
 
   else if(strncmp(payload,"PUT ",4)==0 && cur_http_timer->send.tv_sec == 0)
   {
-    strcpy(cur_http_timer->label,"PUT");
-    cur_http_timer->send = ts;
+    if(cur_http_timer != NULL)
+    {
+      strcpy(cur_http_timer->label,"PUT");
+      cur_http_timer->send = ts;
+    }
   }
 
   else if(strncmp(payload,"POST ",5)==0 && cur_http_timer->send.tv_sec == 0)
   {
-    strcpy(cur_http_timer->label,"POST");
-    cur_http_timer->send = ts;
+    if(cur_http_timer != NULL)
+    {
+      strcpy(cur_http_timer->label,"POST");
+      cur_http_timer->send = ts;
+    }
   }
 
   else if ((strncmp(payload,"HTTP/1.",7)==0) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr)
@@ -887,7 +896,7 @@ int main(int argc,char **argv)
         if(pcap_compile(descr,&fp,argv[3],0,netp) == -1)
         { fprintf(stderr,"Error calling pcap_compile\n"); exit(1); }
 
-        printf("Compiled pcap program\n");y
+        printf("Compiled pcap program\n");
         /* set the compiled program as the filter */
         if(pcap_setfilter(descr,&fp) == -1)
         { fprintf(stderr,"Error setting filter\n"); exit(1); }
