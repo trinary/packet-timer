@@ -183,12 +183,17 @@ int print_http_timings(struct options *opts,struct httptimer *tm)
   printf("Net|Protocol|%s|Time|%s|Ack to First Send\t%s\n",opts->protocol,tm->label,timestr);
 
   timeval_subtract(&tmp,&tm->recv,&tm->send);
-  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|Protocol|%s|Time|%s|Send to First Recv\t%s\n",opts->protocol,tm->label,timestr);
-
+  if ((tmp.tv_sec < 1000)&&((tmp.tv_sec > 0)||(tmp.tv_usec>0)))
+  {
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|Protocol|%s|Time|%s|Send to First Recv\t%s\n",opts->protocol,tm->label,timestr);
+  }
   timeval_subtract(&tmp,&tm->end,&tm->recv);
-  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|Protocol|%s|Time|%s|Recv to Connection Close\t%s\n",opts->protocol,tm->label,timestr);
+  if ((tmp.tv_sec < 1000)&&((tmp.tv_sec > 0)||(tmp.tv_usec>0)))
+  {
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|Protocol|%s|Time|%s|Recv to Connection Close\t%s\n",opts->protocol,tm->label,timestr);
+  }
   return 1;
 }
 
@@ -376,7 +381,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-  else if(strncmp(payload,"GET ",4)==0 && cur_http_timer->send.tv_sec == 0)
+  else if(strncmp(payload,"GET ",4)==0 && cur_http_timer != NULL && cur_http_timer->send.tv_sec == 0)
   {
     if(cur_http_timer != NULL)
     {
@@ -385,7 +390,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-  else if(strncmp(payload,"PUT ",4)==0 && cur_http_timer->send.tv_sec == 0)
+  else if(strncmp(payload,"PUT ",4)==0 && cur_http_timer != NULL && cur_http_timer->send.tv_sec == 0)
   {
     if(cur_http_timer != NULL)
     {
@@ -394,7 +399,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-  else if(strncmp(payload,"POST ",5)==0 && cur_http_timer->send.tv_sec == 0)
+  else if(strncmp(payload,"POST ",5)==0 && cur_http_timer != NULL && cur_http_timer->send.tv_sec == 0)
   {
     if(cur_http_timer != NULL)
     {
@@ -403,7 +408,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-  else if ((strncmp(payload,"HTTP/1.",7)==0) && (opts->selfaddr.s_addr == iph->ip_dst.s_addr)
+  else if ((strncmp(payload,"HTTP/1.",7)==0) && cur_http_timer != NULL && (opts->selfaddr.s_addr == iph->ip_dst.s_addr)
       && cur_http_timer->recv.tv_sec == 0)
   {
     if(cur_http_timer != NULL && cur_http_timer->recv.tv_sec == 0)
@@ -414,7 +419,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
 
   else if(tcph->fin)
   {
-    if(cur_http_timer != NULL && cur_http_timer->end.tv_sec == 0)
+    if(cur_http_timer != NULL && cur_http_timer != NULL && cur_http_timer->end.tv_sec == 0)
     {
       cur_http_timer->end = ts;
       print_http_timings(opts,cur_http_timer);
@@ -763,6 +768,9 @@ int handle_mapi(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     else if(cur_mapi_timer->dce1stresp.tv_sec ==0)
     {
       cur_mapi_timer->dce1stresp=ts;
+      print_mapi_timings(opts,cur_mapi_timer);
+      free(cur_mapi_timer);
+      cur_mapi_timer=NULL;
     }
   }
   if(! incoming && size_payload == 0 && (tcph->fin) && (ntohs(tcph->source) != 135)&& (ntohs(tcph->source) != 135 ) && cur_mapi_timer != NULL)
@@ -770,9 +778,6 @@ int handle_mapi(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     /*begin=cur_mapi_timer->newdcechain.tv_sec*1000000 + cur_mapi_timer->newdcechain.tv_usec;*/
     /*end = (ts.tv_sec*1000000+ts.tv_usec) - begin;*/
     /*(cur_mapi_timer->chain_duration) += end;*/
-    print_mapi_timings(opts,cur_mapi_timer);
-    free(cur_mapi_timer);
-    cur_mapi_timer=NULL;
   }
   return 1;
 }
