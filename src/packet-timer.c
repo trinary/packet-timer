@@ -174,26 +174,34 @@ int print_http_timings(struct options *opts,struct httptimer *tm)
 {
   struct timeval tmp;
   char timestr[64];
+
   timeval_subtract(&tmp,&(tm->ack),&(tm->start));
-  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|Protocol|%s|Time|%s|Time to First ACK\t%s\n",opts->protocol,tm->label,timestr);
+  if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+  {
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|Protocol|%s|Time|%s|Time to First ACK\t%s\n",opts->protocol,tm->label,timestr);
+  }
 
   timeval_subtract(&tmp,&(tm->send),&(tm->ack));
-  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|Protocol|%s|Time|%s|Ack to First Send\t%s\n",opts->protocol,tm->label,timestr);
+  if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+  {
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|Protocol|%s|Time|%s|Ack to First Send\t%s\n",opts->protocol,tm->label,timestr);
+  }
 
   timeval_subtract(&tmp,&tm->recv,&tm->send);
-  if ((tmp.tv_sec < 1000)&&((tmp.tv_sec > 0)||(tmp.tv_usec>0)))
+  if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
   {
     snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
     printf("Net|Protocol|%s|Time|%s|Send to First Recv\t%s\n",opts->protocol,tm->label,timestr);
   }
   timeval_subtract(&tmp,&tm->end,&tm->recv);
-  if ((tmp.tv_sec < 1000)&&((tmp.tv_sec > 0)||(tmp.tv_usec>0)))
+  if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec>=0))
   {
     snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
     printf("Net|Protocol|%s|Time|%s|Recv to Connection Close\t%s\n",opts->protocol,tm->label,timestr);
   }
+  fflush(NULL);
   return 1;
 }
 
@@ -369,6 +377,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     if(cur_http_timer==NULL)
     {
       cur_http_timer = new_http_timer("Other");
+      strcpy(cur_http_timer->label,"GET");
       cur_http_timer->start = ts;
     }
   }
@@ -408,7 +417,7 @@ int handle_http(u_char* args, const struct pcap_pkthdr* pkthdr, const u_char* pa
     }
   }
 
-  else if ((strncmp(payload,"HTTP/1.",7)==0) && cur_http_timer != NULL && (opts->selfaddr.s_addr == iph->ip_dst.s_addr)
+  else if ((strncmp(payload,"HTTP/",5)==0) && cur_http_timer != NULL && (opts->selfaddr.s_addr == iph->ip_dst.s_addr)
       && cur_http_timer->recv.tv_sec == 0)
   {
     if(cur_http_timer != NULL && cur_http_timer->recv.tv_sec == 0)
@@ -436,9 +445,13 @@ int print_dns_timings(struct options *opts,struct dnstimer *tm)
   struct timeval tmp;
   char timestr[64];
   timeval_subtract(&tmp,&(tm->auth),&(tm->start));
-  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|Protocol|%s|Time|DNS|Total Time\t%s\n",opts->protocol,timestr);
+  if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+  {
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|Protocol|%s|Time|DNS|Total Time\t%s\n",opts->protocol,timestr);
+  }
 
+  fflush(NULL);
   return 1;
 }
 
@@ -497,13 +510,21 @@ int print_ftp_timings(struct options *opts,struct ftptimer *tm)
 {
   struct timeval tmp;
   char timestr[64];
+
   timeval_subtract(&tmp,&(tm->ack),&(tm->start));
-  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|Protocol|%s|Time|All|Time to First ack\t%s\n",opts->protocol,timestr);
+  if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+  {
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|Protocol|%s|Time|All|Time to First ack\t%s\n",opts->protocol,timestr);
+  }
 
   timeval_subtract(&tmp,&(tm->end),&(tm->ack));
-  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|Protocol|%s|Time|All|Ack to QUIT Message\t%s\n",opts->protocol,timestr);
+  if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+  {
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|Protocol|%s|Time|All|Ack to QUIT Message\t%s\n",opts->protocol,timestr);
+  }
+  fflush(NULL);
   return 1;
 }
 
@@ -575,33 +596,53 @@ int print_cifs_timings(struct options *opts,struct cifstimer *tm)
   if(a>b)
   {
     timeval_subtract(&tmp,&(tm->send72),&(tm->ack));
-    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-    printf("Net|Protocol|%s|Time|All|ACK to First Command Recv\t%s\n",opts->protocol,timestr);
+    if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+    {
+      snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+      printf("Net|Protocol|%s|Time|All|ACK to First Command Recv\t%s\n",opts->protocol,timestr);
+    }
 
     timeval_subtract(&tmp,&(tm->recv72),&(tm->send72));
-    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-    printf("Net|Protocol|%s|Time|All|Command Recv to First Command Send\t%s\n",opts->protocol,timestr);
+    if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+    {
+      snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+      printf("Net|Protocol|%s|Time|All|Command Recv to First Command Send\t%s\n",opts->protocol,timestr);
+    }
 
     timeval_subtract(&tmp,&(tm->fin),&(tm->recv72));
-    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-    printf("Net|Protocol|%s|Time|All|Command Recv to Connection End\t%s\n",opts->protocol,timestr);
+    if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+    {
+      snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+      printf("Net|Protocol|%s|Time|All|Command Recv to Connection End\t%s\n",opts->protocol,timestr);
+    }
   }
   else
   {
     timeval_subtract(&tmp,&(tm->recv72),&(tm->ack));
-    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-    printf("Net|Protocol|%s|Time|All|ACK to First Command Recv\t%s\n",opts->protocol,timestr);
+    if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+    {
+      snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+      printf("Net|Protocol|%s|Time|All|ACK to First Command Recv\t%s\n",opts->protocol,timestr);
+    }
 
     timeval_subtract(&tmp,&(tm->send72),&(tm->recv72));
-    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-    printf("Net|Protocol|%s|Time|All|Command Recv to First Command Send\t%s\n",opts->protocol,timestr);
+    if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+    {
+      snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+      printf("Net|Protocol|%s|Time|All|Command Recv to First Command Send\t%s\n",opts->protocol,timestr);
+    }
 
     timeval_subtract(&tmp,&(tm->fin),&(tm->send72));
-    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-    printf("Net|Protocol|%s|Time|All|Command Recv to Connection End\t%s\n",opts->protocol,timestr);
+    if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+    {
+
+      snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+      printf("Net|Protocol|%s|Time|All|Command Recv to Connection End\t%s\n",opts->protocol,timestr);
+    }
   }
 
 
+  fflush(NULL);
   return 1;
 }
 
@@ -695,11 +736,14 @@ int print_mapi_timings(struct options *opts,struct mapitimer *tm)
   char timestr[64];
 
   timeval_subtract(&tmp,&(tm->ack),&(tm->start));
-  snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
-  printf("Net|Protocol|%s|Time|Exchange|Time to First ACK\t%s\n",opts->protocol,timestr);
+  if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
+  {
+    snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
+    printf("Net|Protocol|%s|Time|Exchange|Time to First ACK\t%s\n",opts->protocol,timestr);
+  }
 
   timeval_subtract(&tmp,&(tm->dce1streq),&(tm->ack));
-  if(tmp.tv_sec > 0)
+  if ((tmp.tv_sec < 100000)&&(tmp.tv_sec >= 0)&&(tmp.tv_usec >= 0))
   {
     snprintf(timestr,63,"%ld.%.6ld",tmp.tv_sec,(long)tmp.tv_usec);
     printf("Net|Protocol|%s|Time|Exchange|Time to First RPC Request\t%s\n",opts->protocol,timestr);
@@ -707,6 +751,7 @@ int print_mapi_timings(struct options *opts,struct mapitimer *tm)
 
   /*avg_chain = (double)tm->chain_duration / (double)tm->chaincount / 1000000.0;*/
   /*printf("Net|Protocol|%s|Time|Exchange|Avg. MAPI RPC Connection\t%lf\n",opts->protocol,avg_chain);*/
+  fflush(NULL);
 
   return 1;
 }
